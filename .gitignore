@@ -1,0 +1,28 @@
+# Local build caches and IDE settings
+.gradle/
+.build/
+**/build/
+.idea/
+*.iml
+.kotlin/
+local.properties
+.DS_Store
+__pycache__/
+*.py[cod]
+
+# Credentials and signing material
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.p12
+*.pem
+key.properties
+keystore.properties
+
+# Local recordings and generated source archives
+recordings/
+sessions/
+captures/
+outputs/*-source.zip
