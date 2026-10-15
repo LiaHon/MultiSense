@@ -30,7 +30,7 @@ final class SessionRecorder {
         currentState = options.optString("initialState", "静止");
         manifest = new JSONObject().put("schemaVersion", 2).put("id", id)
             .put("title", options.optString("title", "步行采集"))
-            .put("scene", options.optString("scene", "室内"))
+            .put("scene", options.optString("scene", "室内")).put("action", options.optString("action",options.optString("initialState","静止"))).put("defaultScene", options.optString("scene","室内")).put("defaultAction", options.optString("action",options.optString("initialState","静止")))
             .put("pose", options.optString("pose", "手持固定"))
             .put("requestedHz", options.optInt("hz", 200)).put("gnssRequested", options.optBoolean("gnss", true))
             .put("networkRequested",new JSONObject().put("wifi",options.optBoolean("wifi",true)).put("ble",options.optBoolean("ble",true)).put("cell",options.optBoolean("cell",true)))
@@ -42,11 +42,12 @@ final class SessionRecorder {
             .put("coordinates", "Android device frame: X right, Y towards top, Z out of screen. GNSS WGS84.")
             .put("notes", "未采样与丢失数据不补零；传感器异步记录。on-change / trigger 数据不应按连续采样率判断。");
         open("samples.jsonl", "");
-        open("sensors.csv", Csv.row("elapsed_ns", "relative_s", "wall_ms", "sensor_id", "sensor_type", "accuracy", "v0", "v1", "v2", "v3", "v4", "v5", "values_json"));
+        open("sensors.csv", Csv.row("elapsed_ns", "relative_s", "wall_ms", "sensor_id", "sensor_type", "accuracy", "v0", "v1", "v2", "v3", "v4", "v5", "values_json", "scene", "action"));
         open("locations.csv", Csv.row("elapsed_ns", "relative_s", "wall_ms", "provider", "latitude_deg", "longitude_deg", "altitude_m", "horizontal_accuracy_m", "vertical_accuracy_m", "speed_m_s", "speed_accuracy_m_s", "bearing_deg", "bearing_accuracy_deg"));
         open("satellites.csv", Csv.row("elapsed_ns", "relative_s", "svid", "constellation", "cn0_dbhz", "elevation_deg", "azimuth_deg", "used_in_fix"));
         open("nmea.csv", Csv.row("received_elapsed_ns", "source_wall_ms", "sentence"));
         open("markers.csv", Csv.row("elapsed_ns", "relative_s", "label", "note", "reference_latitude_deg", "reference_longitude_deg"));
+        open("states.csv", Csv.row("elapsed_ns","relative_s","wall_ms","scene","action"));
         open("network.csv", Csv.row("elapsed_ns", "relative_s", "wall_ms", "source", "address", "name", "rssi_dbm", "frequency_mhz", "details_json"));
         // Deliberately headerless: assignment format is start_s,end_s,state on every line.
         open("labels.csv", "");
@@ -63,11 +64,11 @@ final class SessionRecorder {
         switch (kind) {
             case "sensor" -> {
                 JSONArray v = event.getJSONArray("values");
-                Object[] cells = new Object[13];
+                Object[] cells = new Object[15];
                 cells[0] = event.getLong("t"); cells[1] = event.getDouble("s"); cells[2] = event.getLong("wall");
                 cells[3] = event.getString("id"); cells[4] = event.getInt("type"); cells[5] = event.getInt("accuracy");
                 for (int i = 0; i < 6; i++) cells[i + 6] = i < v.length() ? v.opt(i) : "";
-                cells[12] = v.toString(); writers.get("sensors.csv").write(Csv.row(cells));
+                cells[12] = v.toString();cells[13]=event.optString("scene");cells[14]=event.optString("action"); writers.get("sensors.csv").write(Csv.row(cells));
             }
             case "location" -> writers.get("locations.csv").write(Csv.row(event.getLong("t"), event.getDouble("s"), event.getLong("wall"), event.opt("provider"), event.opt("lat"), event.opt("lon"), nullable(event,"alt"), nullable(event,"accuracy"), nullable(event,"verticalAccuracy"), nullable(event,"speed"), nullable(event,"speedAccuracy"), nullable(event,"bearing"), nullable(event,"bearingAccuracy")));
             case "satellites" -> {
@@ -84,6 +85,11 @@ final class SessionRecorder {
                     String next = event.getString("label"); double at = event.getDouble("s");
                     if(!next.equals(currentState)) { closeSegment(at); currentState=next; stateStart=at; }
                 }
+            }
+            case "state" -> {
+                writers.get("states.csv").write(Csv.row(event.getLong("t"),event.getDouble("s"),event.getLong("wall"),event.optString("scene"),event.optString("action")));
+                String next=event.optString("action",currentState);double at=event.getDouble("s");
+                if(!next.equals(currentState)){closeSegment(at);currentState=next;stateStart=at;}
             }
             case "network" -> writers.get("network.csv").write(Csv.row(event.getLong("t"),event.getDouble("s"),event.getLong("wall"),event.opt("source"),event.opt("address"),nullable(event,"name"),nullable(event,"rssiDbm"),nullable(event,"frequencyMhz"),event.toString()));
         }
@@ -164,7 +170,7 @@ final class SessionRecorder {
         Map<String,Long> counts = new HashMap<>(); JSONArray stats = metadata.optJSONArray("statistics");
         if (stats != null) for (int i=0;i<stats.length();i++) { JSONObject s=stats.getJSONObject(i);counts.put(s.getString("id"),s.optLong("count")); }
         Map<String,JSONArray> series = new LinkedHashMap<>(); Map<String,Long> seen=new HashMap<>();
-        JSONArray route=new JSONArray(), markers=new JSONArray(); ArrayDeque<JSONObject> raw=new ArrayDeque<>();
+        JSONArray route=new JSONArray(), markers=new JSONArray(), states=new JSONArray(); ArrayDeque<JSONObject> raw=new ArrayDeque<>();
         long locationSeen=0;
         JSONObject eventCounts=metadata.optJSONObject("eventCounts");
         long locationCount=eventCounts==null?0:eventCounts.optLong("location");
@@ -183,11 +189,12 @@ final class SessionRecorder {
                     }
                     case "location" -> {if(locationSeen++%routeStride==0 && route.length()<2000)route.put(e);}
                     case "marker" -> {if(markers.length()<5000)markers.put(e);}
+                    case "state" -> {if(states.length()<5000)states.put(e);}
                 }
             }
         }
         JSONObject streams=new JSONObject();for(var entry:series.entrySet())streams.put(entry.getKey(),entry.getValue());
-        return new JSONObject().put("manifest",metadata).put("streams",streams).put("route",route).put("markers",markers).put("raw",new JSONArray(raw));
+        return new JSONObject().put("manifest",metadata).put("streams",streams).put("route",route).put("markers",markers).put("states",states).put("raw",new JSONArray(raw));
     }
     static JSONObject page(File root,String id,long offset,String filter) throws Exception {
         File d=validatedDirectory(root,id);JSONArray events=new JSONArray();long matched=0;boolean more=false;

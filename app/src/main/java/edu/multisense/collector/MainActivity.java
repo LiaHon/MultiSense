@@ -41,6 +41,7 @@ public final class MainActivity extends Activity {
         @JavascriptInterface public void start(String json){runOnUiThread(()->{try{pendingStart=new JSONObject(json);requestPermissionsAndStart();}catch(Exception e){message("启动失败："+e.getMessage());}});}
         @JavascriptInterface public void stop(){if(service!=null)service.finish();}
         @JavascriptInterface public void marker(String json){try{if(service!=null)service.mark(new JSONObject(json));}catch(Exception e){message("标注失败");}}
+        @JavascriptInterface public void switchState(String json){try{if(service!=null)service.switchState(new JSONObject(json));}catch(Exception e){message("状态切换失败");}}
         @JavascriptInterface public String sessions(){try{return service==null?"[]":SessionRecorder.list(service.root()).toString();}catch(Exception e){return "[]";}}
         @JavascriptInterface public String review(String id){try{if(service==null)return "{}";if(service.isRecording())return "{\"error\":\"请先结束并保存本次采集\"}";return SessionRecorder.review(service.root(),id).toString();}catch(Exception e){return jsonError(e);}}
         @JavascriptInterface public String page(String id,int offset,String filter){try{return service==null?"{}":SessionRecorder.page(service.root(),id,offset,filter).toString();}catch(Exception e){return jsonError(e);}}
