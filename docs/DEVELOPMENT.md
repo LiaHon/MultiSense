@@ -13,14 +13,14 @@
 | `outputs/MultiSense-debug.apk` | 当前课程试采用调试 APK |
 | `gradle/wrapper/` | Gradle Wrapper，确保构建版本一致 |
 
-`MainActivity` 提供本地 WebView 和 JavaScript 桥接。`CaptureService` 枚举并接收设备传感器与 GNSS 回调。`SessionRecorder` 将完整事件写入独立会话目录，并提供列表、回看、分页和 ZIP 导出。`SampleStats` 统计实际频率、间隔和异常；`Csv` 负责 CSV 转义。
+`MainActivity` 提供本地 WebView 和 JavaScript 桥接。`CaptureService` 枚举并接收设备传感器与 GNSS 回调。`SessionRecorder` 将完整事件写入独立会话目录，并提供列表、回看、分页和 ZIP 导出。`SampleStats` 统计实际频率、间隔和异常；`SamplingPolicy` 定义逐类请求周期；`NetworkCollector` 管理 Wi-Fi / BLE / 蜂窝扫描及回调生命周期；`Csv` 负责 CSV 转义。
 
 ## 提交前验证
 
 1. 用 JDK 17 执行 `./gradlew assembleDebug lintDebug`。
 2. 按 README 下载 `org.json` 测试依赖，执行 `scripts/test-storage.sh`。
 3. 修改界面时，运行 `python3 preview/server.py --port 8765`，检查手机和桌面布局，以及开始、标注、停止、回看与导出。
-4. 修改采集逻辑时，在 Android 真机确认权限拒绝、缺失传感器、GNSS、锁屏及后台记录行为。
+4. 修改采集逻辑时，在 Android 真机确认权限拒绝、缺失传感器、GNSS、Wi-Fi 节流、BLE、蜂窝、锁屏及后台记录行为。
 
 网页预览使用模拟数据。存储测试与静态检查不能证明真机采集行为。
 

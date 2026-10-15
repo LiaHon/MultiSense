@@ -18,19 +18,26 @@ final class SessionRecorder {
     private long lastFlush;
     private final Map<String,Long> eventCounts = new LinkedHashMap<>();
     long rows;
+    private String currentState;
+    private double stateStart;
+    private int stateSegments;
+    private final Set<String> stateNames = new LinkedHashSet<>();
 
     SessionRecorder(File root, JSONObject options, JSONArray inventory, long startNs, long startWallMs) throws Exception {
         String id = new java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date(startWallMs)) + "_" + UUID.randomUUID().toString().substring(0, 6);
         directory = new File(root, id);
         if (!directory.mkdirs()) throw new IOException("无法创建采集目录");
-        manifest = new JSONObject().put("schemaVersion", 1).put("id", id)
+        currentState = options.optString("initialState", "静止");
+        manifest = new JSONObject().put("schemaVersion", 2).put("id", id)
             .put("title", options.optString("title", "步行采集"))
             .put("scene", options.optString("scene", "室内"))
             .put("pose", options.optString("pose", "手持固定"))
-            .put("requestedHz", options.optInt("hz", 50)).put("gnssRequested", options.optBoolean("gnss", true))
+            .put("requestedHz", options.optInt("hz", 200)).put("gnssRequested", options.optBoolean("gnss", true))
+            .put("networkRequested",new JSONObject().put("wifi",options.optBoolean("wifi",true)).put("ble",options.optBoolean("ble",true)).put("cell",options.optBoolean("cell",true)))
+            .put("initialState",currentState)
             .put("startedWallMs", startWallMs).put("startedElapsedNs", startNs)
             .put("manufacturer", Build.MANUFACTURER).put("model", Build.MODEL).put("sdk", Build.VERSION.SDK_INT)
-            .put("appVersion", "1.0.0").put("status", "recording").put("sensors", inventory)
+            .put("appVersion", "1.1.1").put("status", "recording").put("sensors", inventory)
             .put("timebase", "elapsed_realtime_ns; sensor timestamps preserved; wall_ms derived from session start")
             .put("coordinates", "Android device frame: X right, Y towards top, Z out of screen. GNSS WGS84.")
             .put("notes", "未采样与丢失数据不补零；传感器异步记录。on-change / trigger 数据不应按连续采样率判断。");
@@ -40,6 +47,9 @@ final class SessionRecorder {
         open("satellites.csv", Csv.row("elapsed_ns", "relative_s", "svid", "constellation", "cn0_dbhz", "elevation_deg", "azimuth_deg", "used_in_fix"));
         open("nmea.csv", Csv.row("received_elapsed_ns", "source_wall_ms", "sentence"));
         open("markers.csv", Csv.row("elapsed_ns", "relative_s", "label", "note", "reference_latitude_deg", "reference_longitude_deg"));
+        open("network.csv", Csv.row("elapsed_ns", "relative_s", "wall_ms", "source", "address", "name", "rssi_dbm", "frequency_mhz", "details_json"));
+        // Deliberately headerless: assignment format is start_s,end_s,state on every line.
+        open("labels.csv", "");
         checkpoint(new JSONArray(), 0, null);
     }
     private void open(String name, String header) throws IOException {
@@ -68,7 +78,14 @@ final class SessionRecorder {
                 }
             }
             case "nmea" -> writers.get("nmea.csv").write(Csv.row(event.getLong("t"), event.opt("sourceWallMs"), event.opt("sentence")));
-            case "marker" -> writers.get("markers.csv").write(Csv.row(event.getLong("t"), event.getDouble("s"), event.opt("label"), event.opt("note"), nullable(event,"refLat"), nullable(event,"refLon")));
+            case "marker" -> {
+                writers.get("markers.csv").write(Csv.row(event.getLong("t"), event.getDouble("s"), event.opt("label"), event.opt("note"), nullable(event,"refLat"), nullable(event,"refLon")));
+                if(event.optBoolean("changesState",true)) {
+                    String next = event.getString("label"); double at = event.getDouble("s");
+                    if(!next.equals(currentState)) { closeSegment(at); currentState=next; stateStart=at; }
+                }
+            }
+            case "network" -> writers.get("network.csv").write(Csv.row(event.getLong("t"),event.getDouble("s"),event.getLong("wall"),event.opt("source"),event.opt("address"),nullable(event,"name"),nullable(event,"rssiDbm"),nullable(event,"frequencyMhz"),event.toString()));
         }
         if (System.currentTimeMillis() - lastFlush > 2000) flush();
     }
@@ -84,10 +101,42 @@ final class SessionRecorder {
         Files.move(temp.toPath(), new File(directory, "manifest.json").toPath(), StandardCopyOption.REPLACE_EXISTING);
     }
     void finish(JSONArray stats, double duration, String status) throws Exception {
+        closeSegment(duration);
         IOException failure = null;
         for (BufferedWriter w : writers.values()) { try { w.close(); } catch (IOException e) { failure = e; } }
         if (failure != null) throw failure;
-        manifest.put("endedWallMs", System.currentTimeMillis()); checkpoint(stats, duration, status);
+        manifest.put("endedWallMs", System.currentTimeMillis()).put("stateNames",new JSONArray(stateNames)).put("stateSegments",stateSegments);
+        writeSummary(stats,duration,status);
+        checkpoint(stats, duration, status);
+    }
+    private void closeSegment(double end) throws IOException {
+        if(end<=stateStart)return;
+        writers.get("labels.csv").write(Csv.row(stateStart,end,currentState));
+        stateNames.add(currentState); stateSegments++;
+    }
+    private void writeSummary(JSONArray stats,double duration,String status) throws Exception {
+        JSONArray motion=new JSONArray(); StringBuilder table=new StringBuilder();
+        JSONArray sensors=manifest.getJSONArray("sensors");
+        boolean motionPass=true; Set<Integer> types=new HashSet<>();
+        for(int i=0;i<sensors.length();i++) {
+            JSONObject sensor=sensors.getJSONObject(i); JSONObject stat=null;
+            for(int j=0;j<stats.length();j++)if(stats.getJSONObject(j).getString("id").equals(sensor.getString("id"))) { stat=stats.getJSONObject(j); break; }
+            long count=stat==null?0:stat.optLong("count"); double hz=duration>0?count/duration:0;
+            table.append("| ").append(sensor.getString("id")).append(" · ").append(sensor.optString("title",sensor.optString("type"))).append(" | ").append(count).append(" | ").append(String.format(Locale.US,"%.3f",hz)).append(" | ").append(sensor.optString("state","未知")).append(" |\n");
+            if(SamplingPolicy.isMotion(sensor.optInt("type"))) {
+                types.add(sensor.getInt("type")); boolean pass=hz>=100; motionPass&=pass;
+                motion.put(new JSONObject().put("id",sensor.getString("id")).put("type",sensor.getInt("type")).put("sessionHz",hz).put("pass",pass).put("count",count));
+            }
+        }
+        JSONArray missing=new JSONArray();
+        for(int type:new int[]{1,4,9,10})if(!types.contains(type)) {missing.put(type);motionPass=false;}
+        JSONObject check=new JSONObject().put("scope","采集检查；不含 FFT、分类器或完整作业 self_test")
+            .put("durationS",duration).put("durationPass",duration>=1200).put("stateCount",stateNames.size()).put("statesPass",stateNames.size()>=3)
+            .put("motionSensors",motion).put("missingMotionTypes",missing).put("motionRatePass",motionPass).put("finishedNormally",status.equals("saved"))
+            .put("continuityNeedsReview",true).put("note","正常结束不能证明全程无间断；请结合 maxGapMs、时间戳异常与全程波形核验。缺失或未选运动通道不视为达标。");
+        Files.write(new File(directory,"collection_check.json").toPath(),check.toString(2).getBytes(StandardCharsets.UTF_8));
+        String text="# 采集数据规格\n\n设备："+Build.MANUFACTURER+" "+Build.MODEL+"（Android SDK "+Build.VERSION.SDK_INT+"）\n\n场景："+manifest.optString("scene")+"；携带位置："+manifest.optString("pose")+"\n\n时长："+String.format(Locale.US,"%.3f",duration)+" 秒；结束状态："+status+"；状态种类："+stateNames.size()+"\n\n实测频率 = 总样本数 / 全次采集时长；事件型与慢变量不按 100 Hz 验收。\n\n| 通道 | 样本数 | 全程实测 Hz | 采集状态 |\n| --- | --- | --- | --- |\n"+table+"\nlabels.csv：无表头，起始秒,结束秒,状态名；区间左闭右开。markers.csv：关键事件及参考点。\n\nnetwork.csv：Wi-Fi/BLE/蜂窝独立观测；系统节流、权限或开关可能使记录为空，详见 manifest.json 的 warnings。\n\n时间为 elapsed realtime 纳秒及推算系统毫秒，传感器采用 Android 机体系，GNSS 为 WGS84。分析前按时间排序；原始数据本地留存，不纳入版本库。\n\n采集检查见 collection_check.json；仍须人工核对全程连续性与标签，完成特征分析和课程 self_test。\n";
+        Files.write(new File(directory,"data_spec.md").toPath(),text.getBytes(StandardCharsets.UTF_8));
     }
     static JSONArray list(File root) throws Exception {
         JSONArray result = new JSONArray(); File[] dirs = root.listFiles(File::isDirectory);

@@ -46,13 +46,16 @@ public final class MainActivity extends Activity {
         @JavascriptInterface public String page(String id,int offset,String filter){try{return service==null?"{}":SessionRecorder.page(service.root(),id,offset,filter).toString();}catch(Exception e){return jsonError(e);}}
         @JavascriptInterface public void exportSession(String id){runOnUiThread(()->{if(service==null)return;if(service.isRecording()){message("请先结束并保存，再导出记录");return;}try{SessionRecorder.validatedDirectory(service.root(),id);exportId=id;Intent intent=new Intent(Intent.ACTION_CREATE_DOCUMENT).setType("application/zip").addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_TITLE,"MultiSense_"+id+".zip");startActivityForResult(intent,200);}catch(Exception e){message(e.getMessage());}});}
         @JavascriptInterface public void locationSettings(){runOnUiThread(()->startActivity(new Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS)));}
+        @JavascriptInterface public void networkSettings(){runOnUiThread(()->startActivity(new Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS)));}
         private String jsonError(Exception e){try{return new JSONObject().put("error",e.getMessage()).toString();}catch(Exception ignored){return "{}";}}
     }
     private void requestPermissionsAndStart(){
         if(service==null){message("设备初始化中，请稍后开始");return;}
         if(service.isRecording()){message("本次采集正在进行");return;}
         ArrayList<String> needed=new ArrayList<>();
-        if(pendingStart.optBoolean("gnss",true)) {addIfMissing(needed,Manifest.permission.ACCESS_FINE_LOCATION);addIfMissing(needed,Manifest.permission.ACCESS_COARSE_LOCATION);}
+        if(pendingStart.optBoolean("gnss",true)||pendingStart.optBoolean("wifi",true)||pendingStart.optBoolean("ble",true)||pendingStart.optBoolean("cell",true)) {addIfMissing(needed,Manifest.permission.ACCESS_FINE_LOCATION);addIfMissing(needed,Manifest.permission.ACCESS_COARSE_LOCATION);}
+        if(Build.VERSION.SDK_INT>=31&&pendingStart.optBoolean("ble",true)) {addIfMissing(needed,Manifest.permission.BLUETOOTH_SCAN);addIfMissing(needed,Manifest.permission.BLUETOOTH_CONNECT);}
+        if(pendingStart.optBoolean("cell",true)&&getPackageManager().hasSystemFeature(PackageManager.FEATURE_TELEPHONY))addIfMissing(needed,Manifest.permission.READ_PHONE_STATE);
         SensorManager manager=(SensorManager)getSystemService(SENSOR_SERVICE);
         if(Build.VERSION.SDK_INT>=29&&(manager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)!=null||manager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)!=null))addIfMissing(needed,Manifest.permission.ACTIVITY_RECOGNITION);
         if(manager.getDefaultSensor(Sensor.TYPE_HEART_RATE)!=null)addIfMissing(needed,Manifest.permission.BODY_SENSORS);

@@ -25,4 +25,6 @@ keystore.properties
 recordings/
 sessions/
 captures/
+# Local analyses may contain real trajectories, event notes and derived recordings.
+analysis/
 outputs/*-source.zip
