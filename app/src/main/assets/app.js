@@ -416,7 +416,7 @@ $('capture-button').onclick = () => {
 document.querySelectorAll('[data-marker]').forEach(b => b.onclick = () => addMarker({ label: b.dataset.marker }));
 function addMarker(o) {
   if (!state.recording || review) { toast('开始采集后才能添加打点'); return; }
-  backend.marker(JSON.stringify(o));
+  backend.marker(JSON.stringify({ ...o, changesState: false }));
   toast('已记录打点：' + o.label);
   poll();
 }
