@@ -168,6 +168,11 @@ $('settings-button').onclick = () => {
 
 $('settings-form').onsubmit = e => {
   e.preventDefault();
+  if (state.recording || state.busy || review) {
+    $('settings-dialog').close();
+    toast('采集中不可修改设置');
+    return;
+  }
   labelConfig.defaultScene = $('input-scene').value;
   labelConfig.defaultAction = $('input-action').value;
   saveLabelsConfig();
@@ -340,7 +345,7 @@ function renderStateControls() {
     if (isAct && isPen) cls += ' active pending';
     else if (isAct) cls += ' active';
     else if (isPen) cls += ' pending';
-    return `<button type='button' class='${cls}' data-select-scene='${esc(sc)}'>${esc(sc)}</button>`;
+    return `<button type='button' class='${cls}' data-select-scene='${esc(sc)}' ${!isRecording ? 'disabled' : ''}>${esc(sc)}</button>`;
   }).join('');
   $('scene-chips').innerHTML = scenesHtml;
 
@@ -351,35 +356,41 @@ function renderStateControls() {
     if (isAct && isPen) cls += ' active pending';
     else if (isAct) cls += ' active';
     else if (isPen) cls += ' pending';
-    return `<button type='button' class='${cls}' data-select-action='${esc(ac)}'>${esc(ac)}</button>`;
+    return `<button type='button' class='${cls}' data-select-action='${esc(ac)}' ${!isRecording ? 'disabled' : ''}>${esc(ac)}</button>`;
   }).join('');
   $('action-chips').innerHTML = actionsHtml;
 
-  document.querySelectorAll('[data-select-scene]').forEach(btn => {
-    btn.onclick = () => {
-      pendingScene = btn.dataset.selectScene;
-      isUserPicking = (pendingScene !== activeScene || pendingAction !== activeAction);
-      renderStateControls();
-    };
-  });
+  if (isRecording) {
+    document.querySelectorAll('[data-select-scene]').forEach(btn => {
+      btn.onclick = () => {
+        pendingScene = btn.dataset.selectScene;
+        isUserPicking = (pendingScene !== activeScene || pendingAction !== activeAction);
+        renderStateControls();
+      };
+    });
 
-  document.querySelectorAll('[data-select-action]').forEach(btn => {
-    btn.onclick = () => {
-      pendingAction = btn.dataset.selectAction;
-      isUserPicking = (pendingScene !== activeScene || pendingAction !== activeAction);
-      renderStateControls();
-    };
-  });
+    document.querySelectorAll('[data-select-action]').forEach(btn => {
+      btn.onclick = () => {
+        pendingAction = btn.dataset.selectAction;
+        isUserPicking = (pendingScene !== activeScene || pendingAction !== activeAction);
+        renderStateControls();
+      };
+    });
+  }
 }
 
 $('confirm-state-btn').onclick = () => {
   if (!state.recording || review) return;
   if (pendingScene === activeScene && pendingAction === activeAction) return;
-  const payload = { scene: pendingScene, action: pendingAction };
-  backend.switchState(JSON.stringify(payload));
-  toast('已提交切换：' + pendingScene + ' + ' + pendingAction);
+  const targetScene = pendingScene, targetAction = pendingAction;
+  backend.switchState(JSON.stringify({ scene: targetScene, action: targetAction }));
+  toast('已切换状态：' + targetScene + ' · ' + targetAction);
+  activeScene = targetScene;
+  activeAction = targetAction;
+  pendingScene = targetScene;
+  pendingAction = targetAction;
   isUserPicking = false;
-  poll();
+  render();
 };
 
 $('cancel-state-btn').onclick = () => {
@@ -541,6 +552,7 @@ function render() {
 
   $('capture-button').classList.toggle('stop', active);
   $('capture-button').disabled = busy;
+  $('settings-button').disabled = active || busy;
   $('capture-button').innerHTML = '<span class=\'record-dot\'></span>' + (review ? '返回实时采集' : busy ? '正在处理…' : active ? '结束并保存' : '开始新采集');
   if (!(d.rows || 0) && !active && !review) $('capture-button').innerHTML = '<span class=\'record-dot\'></span>开始采集';
 

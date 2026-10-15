@@ -192,7 +192,7 @@ public final class CaptureService extends Service implements SensorEventListener
     private void persist(JSONObject e)throws Exception {
         recorder.write(e);synchronized(lock){totalRows++;if(recent.size()==80)recent.removeFirst();recent.add(e);}
     }
-    void mark(JSONObject input){worker.post(()->{if(!recording)return;try{String nextLabel=input.optString("label","标记").trim();if(nextLabel.isEmpty())throw new IllegalArgumentException("标注名称不能为空");boolean changesState=input.optBoolean("changesState",true);JSONObject e=event("marker",SystemClock.elapsedRealtimeNanos()).put("label",nextLabel).put("changesState",changesState).put("note",input.optString("note",""));
+    void mark(JSONObject input){worker.post(()->{if(!recording)return;try{String nextLabel=input.optString("label","标记").trim();if(nextLabel.isEmpty())throw new IllegalArgumentException("标注名称不能为空");boolean changesState=input.optBoolean("changesState",false);JSONObject e=event("marker",SystemClock.elapsedRealtimeNanos()).put("label",nextLabel).put("changesState",changesState).put("note",input.optString("note",""));
         if(input.has("refLat")&&input.has("refLon")){double lat=input.getDouble("refLat"),lon=input.getDouble("refLon");if(!Double.isFinite(lat)||!Double.isFinite(lon)||Math.abs(lat)>90||Math.abs(lon)>180)throw new IllegalArgumentException("参考坐标超出范围");e.put("refLat",lat).put("refLon",lon);}
         persist(e);synchronized(lock){if(changesState){label=nextLabel;currentAction=nextLabel;}if(markers.size()==5000)markers.removeFirst();markers.add(e);}
         if(changesState){JSONObject st=event("state",SystemClock.elapsedRealtimeNanos());persist(st);synchronized(lock){if(states.size()==5000)states.removeFirst();states.add(st);}}

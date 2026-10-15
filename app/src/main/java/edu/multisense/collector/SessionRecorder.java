@@ -27,7 +27,7 @@ final class SessionRecorder {
         String id = new java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date(startWallMs)) + "_" + UUID.randomUUID().toString().substring(0, 6);
         directory = new File(root, id);
         if (!directory.mkdirs()) throw new IOException("无法创建采集目录");
-        currentState = options.optString("initialState", "静止");
+        currentState = options.optString("action", options.optString("initialState", "静止"));
         manifest = new JSONObject().put("schemaVersion", 2).put("id", id)
             .put("title", options.optString("title", "步行采集"))
             .put("scene", options.optString("scene", "室内")).put("action", options.optString("action",options.optString("initialState","静止"))).put("defaultScene", options.optString("scene","室内")).put("defaultAction", options.optString("action",options.optString("initialState","静止")))
@@ -80,14 +80,16 @@ final class SessionRecorder {
             }
             case "nmea" -> writers.get("nmea.csv").write(Csv.row(event.getLong("t"), event.opt("sourceWallMs"), event.opt("sentence")));
             case "marker" -> {
-                writers.get("markers.csv").write(Csv.row(event.getLong("t"), event.getDouble("s"), event.opt("label"), event.opt("note"), nullable(event,"refLat"), nullable(event,"refLon")));
-                if(event.optBoolean("changesState",true)) {
+                writers.get("markers.csv").write(Csv.row(event.getLong("t"), event.getDouble("s"), event.opt("label"), nullable(event,"note"), nullable(event,"refLat"), nullable(event,"refLon")));
+                if(event.optBoolean("changesState",false)) {
                     String next = event.getString("label"); double at = event.getDouble("s");
                     if(!next.equals(currentState)) { closeSegment(at); currentState=next; stateStart=at; }
                 }
             }
             case "state" -> {
-                writers.get("states.csv").write(Csv.row(event.getLong("t"),event.getDouble("s"),event.getLong("wall"),event.optString("scene"),event.optString("action")));
+                writers.get("states.csv").write(Csv.row(event.getLong("t"),event.getDouble("s"),event.optLong("wall",0L),event.optString("scene"),event.optString("action")));
+                manifest.put("scene", event.optString("scene", manifest.optString("scene")));
+                manifest.put("action", event.optString("action", manifest.optString("action")));
                 String next=event.optString("action",currentState);double at=event.getDouble("s");
                 if(!next.equals(currentState)){closeSegment(at);currentState=next;stateStart=at;}
             }
