@@ -25,7 +25,7 @@ public final class CaptureService extends Service implements SensorEventListener
     private final HashMap<String,float[]> latest=new HashMap<>();
     private final HashMap<String,Long> latestTime=new HashMap<>(), displayTime=new HashMap<>();
     private final HashMap<String,ArrayDeque<JSONObject>> streams=new HashMap<>();
-    private final ArrayDeque<JSONObject> recent=new ArrayDeque<>(), route=new ArrayDeque<>(), markers=new ArrayDeque<>();
+    private final ArrayDeque<JSONObject> recent=new ArrayDeque<>(), route=new ArrayDeque<>(), markers=new ArrayDeque<>(), states=new ArrayDeque<>();
     private final ArrayList<String> warnings=new ArrayList<>();
     private SessionRecorder recorder;
     private NetworkCollector networks;
@@ -34,7 +34,7 @@ public final class CaptureService extends Service implements SensorEventListener
     private long startedNs, startedWall, totalRows, lastWakeRenew;
     private double endedDuration;
     private int requestedHz=200;
-    private String savedId="",error="", label="未标注", initialState="静止";
+    private String savedId="",error="", label="静止", initialState="静止", currentScene="室内", currentAction="静止";
     private JSONObject lastLocation;
     private JSONArray satellites=new JSONArray();
     private final TriggerEventListener trigger=new TriggerEventListener() {
@@ -126,12 +126,16 @@ public final class CaptureService extends Service implements SensorEventListener
     }
     private void begin(JSONObject options) {
         try {
-            synchronized(lock){stats.clear();latest.clear();latestTime.clear();displayTime.clear();streams.clear();recent.clear();route.clear();markers.clear();warnings.clear();lastLocation=null;satellites=new JSONArray();savedId="";totalRows=0;endedDuration=0;label="未标注";initialState="静止";
+            synchronized(lock){stats.clear();latest.clear();latestTime.clear();displayTime.clear();streams.clear();recent.clear();route.clear();markers.clear();states.clear();warnings.clear();lastLocation=null;satellites=new JSONArray();savedId="";totalRows=0;endedDuration=0;label="未标注";initialState="静止";
                 for(JSONObject o:inventory.values()){o.put("state","未选择");o.remove("requestedPeriodUs");}
                 networkCounts.clear();networks=null;
                 startedNs=SystemClock.elapsedRealtimeNanos();startedWall=System.currentTimeMillis();requestedHz=SamplingPolicy.motionHz(options.optInt("hz",200));
-                options.put("hz",requestedHz);label=options.optString("initialState","静止").trim();if(label.isEmpty())label="静止";options.put("initialState",label);initialState=label;}
+                options.put("hz",requestedHz);currentScene=options.optString("scene","室内").trim();if(currentScene.isEmpty())currentScene="室内";
+                currentAction=options.optString("action",options.optString("initialState","静止")).trim();if(currentAction.isEmpty())currentAction="静止";
+                label=currentAction;initialState=currentAction;options.put("scene",currentScene);options.put("action",currentAction);options.put("initialState",currentAction);}
             recorder=new SessionRecorder(root(),options,inventoryArray(),startedNs,startedWall);
+            JSONObject initial=new JSONObject().put("kind","state").put("t",Long.toString(startedNs)).put("s",0.0).put("wall",startedWall).put("scene",currentScene).put("action",currentAction).put("label",label);
+            persist(initial);synchronized(lock){states.add(initial);}
             synchronized(lock){recording=true;busy=false;}
             wakeLock=((PowerManager)getSystemService(POWER_SERVICE)).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"MultiSense:recording");
             wakeLock.setReferenceCounted(false);wakeLock.acquire(600_000);lastWakeRenew=SystemClock.elapsedRealtime();
@@ -180,13 +184,32 @@ public final class CaptureService extends Service implements SensorEventListener
             persist(e);
         }catch(Exception e){fail(e);}
     }
-    private JSONObject event(String kind,long time)throws JSONException{return new JSONObject().put("kind",kind).put("t",Long.toString(time)).put("s",(time-startedNs)/1e9).put("wall",startedWall+(time-startedNs)/1_000_000).put("label",label);}
+    private JSONObject event(String kind,long time)throws JSONException{
+        String curScene,curAction,curLabel;
+        synchronized(lock){curScene=currentScene;curAction=currentAction;curLabel=label;}
+        return new JSONObject().put("kind",kind).put("t",Long.toString(time)).put("s",(time-startedNs)/1e9).put("wall",startedWall+(time-startedNs)/1_000_000).put("scene",curScene).put("action",curAction).put("label",curLabel);
+    }
     private void persist(JSONObject e)throws Exception {
         recorder.write(e);synchronized(lock){totalRows++;if(recent.size()==80)recent.removeFirst();recent.add(e);}
     }
-    void mark(JSONObject input){worker.post(()->{if(!recording)return;try{String nextLabel=input.optString("label","标记").trim();if(nextLabel.isEmpty())throw new IllegalArgumentException("标注名称不能为空");boolean changesState=input.optBoolean("changesState",true);JSONObject e=event("marker",SystemClock.elapsedRealtimeNanos()).put("label",nextLabel).put("changesState",changesState).put("note",input.optString("note",""));
+    void mark(JSONObject input){worker.post(()->{if(!recording)return;try{String nextLabel=input.optString("label","标记").trim();if(nextLabel.isEmpty())throw new IllegalArgumentException("标注名称不能为空");boolean changesState=input.optBoolean("changesState",false);JSONObject e=event("marker",SystemClock.elapsedRealtimeNanos()).put("label",nextLabel).put("changesState",changesState).put("note",input.optString("note",""));
         if(input.has("refLat")&&input.has("refLon")){double lat=input.getDouble("refLat"),lon=input.getDouble("refLon");if(!Double.isFinite(lat)||!Double.isFinite(lon)||Math.abs(lat)>90||Math.abs(lon)>180)throw new IllegalArgumentException("参考坐标超出范围");e.put("refLat",lat).put("refLon",lon);}
-        persist(e);synchronized(lock){if(changesState)label=nextLabel;if(markers.size()==5000)markers.removeFirst();markers.add(e);}}catch(Exception e){warn("标注失败："+e.getMessage());}});}
+        persist(e);synchronized(lock){if(changesState){label=nextLabel;currentAction=nextLabel;}if(markers.size()==5000)markers.removeFirst();markers.add(e);}
+        if(changesState){JSONObject st=event("state",SystemClock.elapsedRealtimeNanos());persist(st);synchronized(lock){if(states.size()==5000)states.removeFirst();states.add(st);}}
+        }catch(Exception e){warn("标注失败："+e.getMessage());}});}
+    void switchState(JSONObject input){worker.post(()->{
+        if(!recording)return;
+        try{
+            String nextScene=input.optString("scene","").trim(),nextAction=input.optString("action","").trim();
+            if(nextScene.isEmpty()||nextAction.isEmpty())throw new IllegalArgumentException("场景与动作不能为空");
+            synchronized(lock){if(nextScene.equals(currentScene)&&nextAction.equals(currentAction))return;}
+            long now=SystemClock.elapsedRealtimeNanos();
+            JSONObject changed=new JSONObject().put("kind","state").put("t",Long.toString(now)).put("s",(now-startedNs)/1e9)
+                .put("wall",startedWall+(now-startedNs)/1_000_000).put("scene",nextScene).put("action",nextAction).put("label",nextAction);
+            persist(changed);
+            synchronized(lock){currentScene=nextScene;currentAction=nextAction;label=nextAction;if(states.size()==5000)states.removeFirst();states.add(changed);}
+        }catch(Exception e){warn("状态切换失败："+e.getMessage());}
+    });}
     void finish(){worker.post(()->complete("saved"));}
     private void complete(String status) {
         synchronized(lock){if(!recording&&!busy&&recorder==null)return;recording=false;busy=true;endedDuration=startedNs==0?0:(SystemClock.elapsedRealtimeNanos()-startedNs)/1e9;}
@@ -208,8 +231,8 @@ public final class CaptureService extends Service implements SensorEventListener
         JSONObject stream=new JSONObject(),values=new JSONObject();for(var e:streams.entrySet())stream.put(e.getKey(),new JSONArray(e.getValue()));
         for(var e:latest.entrySet()){JSONArray v=new JSONArray();for(float f:e.getValue())v.put(Float.isFinite(f)?f:JSONObject.NULL);values.put(e.getKey(),new JSONObject().put("values",v).put("ageMs",(SystemClock.elapsedRealtimeNanos()-latestTime.get(e.getKey()))/1e6));}
         return new JSONObject().put("native",true).put("recording",recording).put("busy",busy).put("error",error).put("savedId",savedId).put("sessionId",recorder==null?savedId:recorder.directory.getName())
-            .put("duration",recording?(SystemClock.elapsedRealtimeNanos()-startedNs)/1e9:endedDuration).put("rows",totalRows).put("requestedHz",requestedHz).put("label",label)
-            .put("inventory",inventoryArray()).put("stats",statistics()).put("latest",values).put("streams",stream).put("raw",new JSONArray(recent)).put("route",new JSONArray(route)).put("markers",new JSONArray(markers))
+            .put("duration",recording?(SystemClock.elapsedRealtimeNanos()-startedNs)/1e9:endedDuration).put("rows",totalRows).put("requestedHz",requestedHz).put("label",label).put("scene",currentScene).put("action",currentAction)
+            .put("inventory",inventoryArray()).put("stats",statistics()).put("latest",values).put("streams",stream).put("raw",new JSONArray(recent)).put("route",new JSONArray(route)).put("markers",new JSONArray(markers)).put("states",new JSONArray(states))
             .put("initialState",initialState).put("networkStatus",networks==null?new JSONObject():networks.snapshot()).put("networkCounts",new JSONObject(networkCounts))
             .put("location",lastLocation==null?JSONObject.NULL:lastLocation).put("satellites",satellites).put("warnings",new JSONArray(warnings)).put("device",Build.MANUFACTURER+" "+Build.MODEL).toString();
     }catch(Exception e){return "{}";}}}
