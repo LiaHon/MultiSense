@@ -7,8 +7,8 @@ android {
         applicationId 'edu.multisense.collector'
         minSdk 26
         targetSdk 34
-        versionCode 3
-        versionName '1.1.1'
+        versionCode 4
+        versionName '1.1.2'
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
     signingConfigs { debug { if (System.getenv('MULTISENSE_DEBUG_KEYSTORE')) storeFile file(System.getenv('MULTISENSE_DEBUG_KEYSTORE')) } }

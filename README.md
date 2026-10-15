@@ -19,15 +19,15 @@ Android multi-sensor and GNSS data collector for teaching and field experiments.
 
 ## 安装和使用
 
-[下载调试 APK](https://github.com/LiaHon/MultiSense/raw/refs/heads/main/outputs/MultiSense-debug.apk)，或从本仓库 `outputs/MultiSense-debug.apk` 安装。这是用于课程试采和真机验证的调试签名版本，版本号为 `1.1.1`。Android 安装器可能需要允许当前下载应用安装未知来源应用。
+[下载调试 APK](https://github.com/LiaHon/MultiSense/raw/refs/heads/main/outputs/MultiSense-debug.apk)，或从本仓库 `outputs/MultiSense-debug.apk` 安装。这是用于课程试采和真机验证的调试签名版本，版本号为 `1.1.2`。Android 安装器可能需要允许当前下载应用安装未知来源应用。
 
-1. 打开 App，在右上角设置记录名称、场景、手机姿态及目标采样率（100/200 Hz，默认 200 Hz），以及第 0 秒的初始运动状态。
+1. 打开 App，在右上角设置记录名称、默认场景与动作、手机姿态及目标采样率（100/200 Hz，默认 200 Hz）。可在“自定义场景与动作”中增删或重命名选项。手机姿态在采集期间锁定。
 2. 在“传感器”页查看手机实际提供的数据源，默认全选。可选择是否同时记录 GNSS、Wi-Fi、BLE 与蜂窝基站。
 3. 点击“开始采集”，按系统提示授予相关权限；未授权或不支持的数据源会显示提示，其余数据仍可采集。
-4. 查看三轴波形、方向仪、位置轨迹、环境读数、卫星强度和实测频率。状态变化时点击“静止”“常速走”“电梯”等按钮；在自定义标注中选择关键事件，可记录“上车”“进入楼宇”“到达”而保持当前状态，也可填写已知参考点的 WGS84 经纬度。
+4. 查看三轴波形、方向仪、位置轨迹、环境读数、卫星强度和实测频率。选择场景或动作后点击“确认切换”才会生效；点击“取消”放弃待确认选择。独立打点只记录瞬间事件，可填写已知参考点的 WGS84 经纬度。
 5. 点击“结束并保存”，本次记录独立保存。进入“采集记录”可回看图表、逐页查看完整原始事件、导出包含状态区间和数据说明的 ZIP。通知栏也可结束并保存。
 
-界面显示 20 分钟目标、状态种类及关键事件数量。正式通勤采集应连续不少于 20 分钟，包含至少 3 种真实运动状态，并记录 2–3 个关键事件；手机携带位置需与设置一致。
+界面显示 20 分钟目标、动作状态种类及独立打点记录。正式通勤采集应连续不少于 20 分钟，包含至少 3 种真实运动状态，并记录 2–3 个关键事件；手机携带位置需与设置一致。
 
 建议首次在前台采集 40 秒：静止 10 秒、常速踏步 20 秒、快速踏步 10 秒；保存后检查 CSV。再做室外行走、转弯、停步和锁屏试采，确认自己的手机允许持续记录。
 
@@ -51,11 +51,12 @@ Wi-Fi、BLE 和蜂窝默认启用，可在设置中关闭。需要精确定位�
 | --- | --- |
 | `manifest.json` | 设备与传感器清单、单位、量程、版本、场景、携带姿态、目标/实测频率、计数、最大间隔、异常和完成状态 |
 | `samples.jsonl` | 全部原始事件，含任意长度完整传感器向量、GNSS 原始测量、动作标签 |
-| `sensors.csv` | 每次传感器事件；`v0`–`v5` 便于分析，`values_json` 保存完整向量，包括超过 6 维的数据 |
+| `sensors.csv` | 每次传感器事件；`v0`–`v5` 便于分析，`values_json` 保存完整向量，包括超过 6 维的数据；`scene` / `action` 为生效的场景与动作 |
 | `locations.csv` | 异步系统位置观测及精度，缺失字段留空 |
 | `satellites.csv` | 可见卫星、星座、C/N0、仰角、方位角及参与定位标志 |
 | `nmea.csv` | NMEA 语句与收到时刻、源墙钟时间 |
-| `markers.csv` | 状态变化、关键事件和参考点标注、时间、备注、可选参考坐标；`changesState` 区分见原始 JSONL |
+| `markers.csv` | 独立事件及参考点的时间、名称、备注和可选参考坐标 |
+| `states.csv` | 第 0 秒初始状态及每次确认生效的场景、动作和时间 |
 | `network.csv` | Wi-Fi / BLE / 蜂窝分行保存，含源时间、地址/基站身份、RSSI 与完整 details_json |
 | `labels.csv` | 无表头，每行 `起始秒,结束秒,状态名`，从第 0 秒覆盖至停止时间，左闭右开 |
 | `data_spec.md` | 设备、携带位置、时长、通道清单及各路全程实测频率 |
@@ -63,7 +64,7 @@ Wi-Fi、BLE 和蜂窝默认启用，可在设置中关闭。需要精确定位�
 
 运动核心通道（加速度、角速度、线性加速度、重力）请求 100/200 Hz；未校准加速度/角速度使用同档，磁场请求 50 Hz，旋转向量请求 100 Hz，慢变量使用 SENSOR_DELAY_NORMAL（变化/事件型保留系统触发）。`requestedPeriodUs` 记录逐通道请求周期。实测 `sessionHz = count / durationS` 与界面和规格说明一致；`hz` 另保留首末样本间隔估计，`maxGapMs` 和 `nonMonotonic` 用于连续性核验。目标频率不保证实际达标。
 
-状态按钮是“从现在起切换状态”，重复点击同一状态不会拆段；关键事件不会拆段。停止时自动关闭最后一段。请核对导出的 labels.csv 与真实过程一致；漏标可在导出后人工修订，不应伪造或拼接数据。异常退出时标签末段可能尚未闭合，采集记录会保留未完整结束状态。
+确认切换后，新的场景与动作从现在起生效；重复确认同一状态不会新增记录。仅切换场景会写入 `states.csv`，不会拆分 `labels.csv` 中的动作区间；独立打点也不会拆段。停止时自动关闭最后一段。旧版记录回看会从初始动作和原有状态标注恢复区间，原始文件保持不变。请核对导出的 labels.csv 与真实过程一致；漏标可在导出后人工修订，不应伪造或拼接数据。异常退出时标签末段可能尚未闭合，采集记录会保留未完整结束状态。
 
 传感器和位置保留系统原始 elapsed realtime 纳秒时间戳；NMEA/卫星回调使用接收时间并单独保留可用的源时间。JSON 中 `t` 和 GNSS 长整型纳秒字段使用十进制字符串，避免 JavaScript 对 64 位整数舍入。CSV `elapsed_ns` 为十进制整数。`s` 是相对采集起点的秒数；`wall` 从采集起点的墙钟与单调时间推算，避免中途校时影响时间轴。传感器彼此异步，不强制重采样，也不以零值填补缺失。
 
@@ -91,7 +92,7 @@ sdk.dir=/你的/Android/sdk
 ./gradlew lintDebug
 ```
 
-APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。无额外 App 依赖，Gradle 插件为 8.7.3，Gradle 为 8.9。默认 Android 调试签名；在受限构建环境中可通过 `MULTISENSE_DEBUG_KEYSTORE` 指定已有调试 keystore。
+APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。无额外 App 依赖，Gradle 插件为 8.7.3，Gradle 为 8.9。默认使用本机 Android 调试签名；可通过 `MULTISENSE_DEBUG_KEYSTORE` 指定已有调试 keystore。分发到 `outputs/` 的 APK 必须使用原发布签名，具体校验步骤见 [开发与验证说明](docs/DEVELOPMENT.md#发布调试-apk)。
 
 Windows 使用 `gradlew.bat assembleDebug` 和 `gradlew.bat lintDebug`。
 

@@ -96,11 +96,28 @@ function statFor(type, data = state) {
   return src ? (data.stats || []).find(s => s.id === src.id) : null;
 }
 
+function stateHistory(data) {
+  if (data.states?.length) return data.states;
+  // Older sessions stored state changes as markers, with changesState defaulting to true.
+  const scene = data.scene || labelConfig.defaultScene;
+  let action = data.initialState || data.action || labelConfig.defaultAction;
+  const states = [{ s: 0, scene, action, label: action }];
+  for (const marker of [...(data.markers || [])].sort((a, b) => a.s - b.s)) {
+    if (marker.changesState === false || !marker.label || marker.label === action) continue;
+    action = marker.label;
+    states.push({ s: marker.s, scene, action, label: action });
+  }
+  return states;
+}
+
 function displayData() {
   if (!review) return state;
   const m = review.manifest || {}, latest = {};
   for (const [id, points] of Object.entries(review.streams || {}))
     if (points.length) latest[id] = { values: points.at(-1).values };
+  const states = stateHistory({ states: review.states, markers: review.markers,
+    scene: m.defaultScene || m.scene, initialState: m.initialState || m.defaultAction, action: m.action });
+  const lastState = states.at(-1);
   return {
     inventory: m.sensors || [],
     stats: m.statistics || [],
@@ -112,14 +129,14 @@ function displayData() {
     networkStatus: m.networkStatus || {},
     networkCounts: m.networkCounts || {},
     initialState: m.initialState || m.action || '静止',
-    states: review.states || [],
-    scene: m.scene || '室内',
-    action: m.action || '步行',
+    states,
+    scene: lastState.scene,
+    action: lastState.action,
     duration: m.durationS,
     rows: m.rows,
     location: review.route?.at(-1),
     requestedHz: m.requestedHz,
-    label: (m.scene || '室内') + '·' + (m.action || '步行'),
+    label: lastState.action,
     satellites: []
   };
 }
@@ -244,36 +261,10 @@ function renderLabelsManager() {
     };
   });
   document.querySelectorAll('[data-edit-scene]').forEach(b => {
-    b.onclick = () => {
-      const idx = Number(b.dataset.editScene);
-      const oldVal = labelConfig.scenes[idx];
-      const newVal = prompt('修改场景名称：', oldVal)?.trim();
-      if (!newVal || newVal === oldVal) return;
-      if (labelConfig.scenes.includes(newVal)) { toast('场景名称已存在'); return; }
-      labelConfig.scenes[idx] = newVal;
-      if (labelConfig.defaultScene === oldVal) labelConfig.defaultScene = newVal;
-      if (activeScene === oldVal) activeScene = newVal;
-      if (pendingScene === oldVal) pendingScene = newVal;
-      saveLabelsConfig();
-      renderLabelsManager();
-      render();
-    };
+    b.onclick = () => openLabelEditor('scene', Number(b.dataset.editScene));
   });
   document.querySelectorAll('[data-edit-action]').forEach(b => {
-    b.onclick = () => {
-      const idx = Number(b.dataset.editAction);
-      const oldVal = labelConfig.actions[idx];
-      const newVal = prompt('修改动作名称：', oldVal)?.trim();
-      if (!newVal || newVal === oldVal) return;
-      if (labelConfig.actions.includes(newVal)) { toast('动作名称已存在'); return; }
-      labelConfig.actions[idx] = newVal;
-      if (labelConfig.defaultAction === oldVal) labelConfig.defaultAction = newVal;
-      if (activeAction === oldVal) activeAction = newVal;
-      if (pendingAction === oldVal) pendingAction = newVal;
-      saveLabelsConfig();
-      renderLabelsManager();
-      render();
-    };
+    b.onclick = () => openLabelEditor('action', Number(b.dataset.editAction));
   });
   document.querySelectorAll('[data-del-scene]').forEach(b => {
     b.onclick = () => {
@@ -304,6 +295,39 @@ function renderLabelsManager() {
     };
   });
 }
+
+let editingLabel = null;
+function openLabelEditor(kind, index) {
+  editingLabel = { kind, index };
+  $('label-edit-title').textContent = kind === 'scene' ? '修改场景名称' : '修改动作名称';
+  $('label-edit-name').value = labelConfig[kind === 'scene' ? 'scenes' : 'actions'][index];
+  $('label-edit-dialog').showModal();
+}
+$('label-edit-dialog').onclose = () => { editingLabel = null; };
+$('label-edit-form').onsubmit = e => {
+  e.preventDefault();
+  if (!editingLabel) return;
+  if (state.recording || state.busy || review) { toast('请结束采集并返回实时页后编辑标签'); return; }
+  const { kind, index } = editingLabel;
+  const isScene = kind === 'scene', labels = labelConfig[isScene ? 'scenes' : 'actions'];
+  const oldVal = labels[index], newVal = $('label-edit-name').value.trim();
+  if (!newVal) { toast('名称不能为空'); return; }
+  if (newVal !== oldVal && labels.includes(newVal)) { toast(isScene ? '场景名称已存在' : '动作名称已存在'); return; }
+  labels[index] = newVal;
+  if (isScene) {
+    if (labelConfig.defaultScene === oldVal) labelConfig.defaultScene = newVal;
+    if (activeScene === oldVal) activeScene = newVal;
+    if (pendingScene === oldVal) pendingScene = newVal;
+  } else {
+    if (labelConfig.defaultAction === oldVal) labelConfig.defaultAction = newVal;
+    if (activeAction === oldVal) activeAction = newVal;
+    if (pendingAction === oldVal) pendingAction = newVal;
+  }
+  saveLabelsConfig();
+  $('label-edit-dialog').close();
+  renderLabelsManager();
+  render();
+};
 
 $('add-scene-btn').onclick = () => {
   const val = $('new-scene-input').value.trim();
@@ -525,8 +549,9 @@ function renderHistory() {
       frozen = false;
       $('review-banner').hidden = false;
       $('review-title').textContent = '回看：' + data.manifest.title + ' · ' + time(data.manifest.durationS);
-      activeScene = data.manifest.scene || '室内';
-      activeAction = data.manifest.action || '步行';
+      const finalState = displayData();
+      activeScene = finalState.scene;
+      activeAction = finalState.action;
       pendingScene = activeScene;
       pendingAction = activeAction;
       isUserPicking = false;
@@ -543,7 +568,7 @@ function render() {
 
   $('session-name').textContent = review ? review.manifest.title : settings.title;
   $('scene-display').textContent = review ?
-    ((review.manifest.scene || '室内') + (review.manifest.action ? ' + ' + review.manifest.action : '') + ' · ' + review.manifest.pose) :
+    (d.scene + ' + ' + d.action + ' · ' + review.manifest.pose) :
     (activeScene + ' · ' + activeAction + ' · ' + settings.pose);
 
   $('duration').textContent = time(d.duration);
@@ -616,9 +641,7 @@ function renderOverview(d) {
 
   // State intervals duration bar
   const duration = Math.max(d.duration || 0, 0.001);
-  const rawStates = (d.states && d.states.length) ? d.states : [
-    { s: 0, scene: d.scene || (review?.manifest?.scene) || labelConfig.defaultScene, action: d.action || (review?.manifest?.action) || labelConfig.defaultAction, label: d.label || '初始' }
-  ];
+  const rawStates = stateHistory(d);
 
   $('state-count').textContent = rawStates.length + ' 个状态区间';
 
@@ -676,7 +699,7 @@ function renderOverview(d) {
 
 function renderCourse(d){
   const duration=d.duration||0;
-  const names=new Set((d.states||[]).map(e=>e.action).filter(Boolean));
+  const names=new Set(stateHistory(d).map(e=>e.action).filter(Boolean));
   const acc=(d.stats||[]).find(x=>(d.inventory||[]).some(s=>s.id===x.id&&s.type===1));
   const hz=acc?(acc.sessionHz??(duration>0?acc.count/duration:0)):0;
   $('course-progress').value=Math.min(duration,1200);

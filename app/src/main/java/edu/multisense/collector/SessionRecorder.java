@@ -37,7 +37,7 @@ final class SessionRecorder {
             .put("initialState",currentState)
             .put("startedWallMs", startWallMs).put("startedElapsedNs", startNs)
             .put("manufacturer", Build.MANUFACTURER).put("model", Build.MODEL).put("sdk", Build.VERSION.SDK_INT)
-            .put("appVersion", "1.1.1").put("status", "recording").put("sensors", inventory)
+            .put("appVersion", "1.1.2").put("status", "recording").put("sensors", inventory)
             .put("timebase", "elapsed_realtime_ns; sensor timestamps preserved; wall_ms derived from session start")
             .put("coordinates", "Android device frame: X right, Y towards top, Z out of screen. GNSS WGS84.")
             .put("notes", "未采样与丢失数据不补零；传感器异步记录。on-change / trigger 数据不应按连续采样率判断。");
